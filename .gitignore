@@ -3,3 +3,9 @@ __pycache__/
 
 project.microreact
 variant_positions.csv
+no_ref.csv
+no_ref.microreact
+ref.csv
+ref.microreact
+ref_labelled.csv
+ref_labelled.microreact

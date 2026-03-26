@@ -56,6 +56,14 @@ def parse_args() -> argparse.Namespace:
         help="Identifier column name for the CSV",
     )
     parser.add_argument(
+        "--reference-id",
+        help=(
+            "Optional reference sequence ID from the alignment. Columns where the "
+            "reference has a gap are removed, and remaining columns are numbered "
+            "by reference position."
+        ),
+    )
+    parser.add_argument(
         "--token-env",
         default=DEFAULT_TOKEN_ENV,
         help=(
@@ -154,20 +162,47 @@ def normalise_base(value: str, ignore_case: bool) -> str:
     return value.upper() if ignore_case else value
 
 
-def find_variant_positions(
-    records: list[tuple[str, str]], ignore_case: bool
-) -> list[int]:
-    sequences = [sequence for _, sequence in records]
-    variant_positions: list[int] = []
+def build_column_map(
+    records: list[tuple[str, str]], reference_id: str | None
+) -> list[tuple[int, int]]:
+    alignment_length = len(records[0][1])
+    if reference_id is None:
+        return [(index, index + 1) for index in range(alignment_length)]
 
-    for index, column_values in enumerate(zip(*sequences), start=1):
+    record_map = dict(records)
+    if reference_id not in record_map:
+        raise SystemExit(f"Reference sequence {reference_id!r} was not found in the alignment")
+
+    reference_sequence = record_map[reference_id]
+    column_map: list[tuple[int, int]] = []
+    reference_position = 0
+    for alignment_index, value in enumerate(reference_sequence):
+        if value in {"-", "."}:
+            continue
+        reference_position += 1
+        column_map.append((alignment_index, reference_position))
+
+    if not column_map:
+        raise SystemExit(f"Reference sequence {reference_id!r} contains no non-gap positions")
+
+    return column_map
+
+
+def find_variant_positions(
+    records: list[tuple[str, str]], column_map: list[tuple[int, int]], ignore_case: bool
+) -> list[tuple[int, int]]:
+    sequences = [sequence for _, sequence in records]
+    variant_positions: list[tuple[int, int]] = []
+
+    for alignment_index, label_position in column_map:
+        column_values = [sequence[alignment_index] for sequence in sequences]
         observed = {
             normalise_base(value, ignore_case)
             for value in column_values
             if value not in {"?", "."}
         }
         if len(observed) > 1:
-            variant_positions.append(index)
+            variant_positions.append((alignment_index, label_position))
 
     if not variant_positions:
         raise SystemExit("No variant positions were found in the supplied alignment")
@@ -176,15 +211,15 @@ def find_variant_positions(
 
 
 def build_rows(
-    records: list[tuple[str, str]], variant_positions: list[int], id_column: str
+    records: list[tuple[str, str]], variant_positions: list[tuple[int, int]], id_column: str
 ) -> tuple[list[str], list[dict[str, str]]]:
-    header = [id_column] + [f"pos_{position}" for position in variant_positions]
+    header = [id_column] + [f"pos_{position}" for _, position in variant_positions]
     rows: list[dict[str, str]] = []
 
     for sample_id, sequence in records:
         row = {id_column: sample_id}
-        for position in variant_positions:
-            row[f"pos_{position}"] = sequence[position - 1]
+        for alignment_index, label_position in variant_positions:
+            row[f"pos_{label_position}"] = sequence[alignment_index]
         rows.append(row)
 
     return header, rows
@@ -228,6 +263,7 @@ def build_microreact_payload(
     tree_bytes: bytes,
     id_column: str,
     table_fields: list[str],
+    reference_id: str | None = None,
     secondary_table_path: Path | None = None,
     secondary_table_bytes: bytes | None = None,
     secondary_table_fields: list[str] | None = None,
@@ -240,9 +276,20 @@ def build_microreact_payload(
         "data:application/octet-stream;base64,"
         + base64.b64encode(tree_bytes).decode("ascii")
     )
+    position_title = "Variant positions"
+    if reference_id:
+        position_title = f"Variant positions ({reference_id} reference)"
+
     payload = {
         "schema": "https://microreact.org/schema/v1.json",
-        "meta": {"name": project_name},
+        "meta": {
+            "name": project_name,
+            "description": (
+                f"Variant positions numbered relative to reference {reference_id}."
+                if reference_id
+                else "Variant positions numbered by alignment column."
+            ),
+        },
         "files": {
             "data-file-1": {
                 "id": "data-file-1",
@@ -271,7 +318,7 @@ def build_microreact_payload(
         "tables": {
             "table-1": {
                 "dataset": "dataset-1",
-                "title": "Variant positions",
+                "title": position_title,
                 "columns": [{"field": field} for field in table_fields],
             }
         },
@@ -381,7 +428,10 @@ def main() -> int:
         args.payload_output = args.payload_output.with_suffix(".microreact")
 
     records = read_fasta(args.alignment)
-    variant_positions = find_variant_positions(records, ignore_case=args.ignore_case)
+    column_map = build_column_map(records, args.reference_id)
+    variant_positions = find_variant_positions(
+        records, column_map=column_map, ignore_case=args.ignore_case
+    )
     header, rows = build_rows(records, variant_positions, args.id_column)
 
     write_csv(args.csv_output, header, rows)
@@ -411,6 +461,7 @@ def main() -> int:
         tree_bytes=tree_bytes,
         id_column=args.id_column,
         table_fields=header,
+        reference_id=args.reference_id,
         secondary_table_path=args.secondary_table,
         secondary_table_bytes=secondary_table_bytes,
         secondary_table_fields=secondary_table_fields,
@@ -424,6 +475,7 @@ def main() -> int:
         "project_name": args.project_name,
         "samples": len(records),
         "alignment_length": len(records[0][1]),
+        "reference_id": args.reference_id,
         "variant_positions": len(variant_positions),
         "csv_output": str(args.csv_output.resolve()),
         "payload_output": str(args.payload_output.resolve()),
