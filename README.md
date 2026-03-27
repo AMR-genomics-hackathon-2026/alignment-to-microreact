@@ -77,12 +77,25 @@ python3 build_microreact_from_alignment.py \
 
 If you want reference-gap columns to be retained by folding them into a nearby reference position, add `--compress-inserts`. Insert runs are merged into the preceding retained reference position, except for leading inserts before the first reference base, which are merged into the first retained position. For example, if the aligned values are `A,B,C,D,E,F` and positions `3` and `4` are insert columns relative to the reference, `--compress-inserts` produces `A,BCD,E,F` instead of `A,B,E,F`.
 
+`--compress-inserts` only works together with `--reference-id`, because insert columns are defined relative to a named reference sequence.
+
 ```bash
+# valid: compress inserts while numbering columns against SHV-1
 python3 build_microreact_from_alignment.py \
   SHV_protein_alignment.fas \
   gene_SHV_aligned.tree \
   --project-name "SHV variants (compressed inserts)" \
   --reference-id SHV-1 \
+  --compress-inserts \
+  --skip-upload
+```
+
+```bash
+# invalid: this exits with "--compress-inserts requires --reference-id"
+python3 build_microreact_from_alignment.py \
+  SHV_protein_alignment.fas \
+  gene_SHV_aligned.tree \
+  --project-name "Invalid compressed inserts example" \
   --compress-inserts \
   --skip-upload
 ```
