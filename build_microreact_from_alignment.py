@@ -10,6 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
 
 API_URL = "https://microreact.org/api/projects/create"
@@ -128,7 +129,7 @@ def parse_args() -> argparse.Namespace:
 
 def read_fasta(path: Path) -> list[tuple[str, str]]:
     records: list[tuple[str, str]] = []
-    current_name: str | None = None
+    current_name: Optional[str] = None
     current_chunks: list[str] = []
 
     with path.open() as handle:
@@ -171,7 +172,7 @@ def normalise_base(value: str, ignore_case: bool) -> str:
 
 
 def build_column_groups(
-    records: list[tuple[str, str]], reference_id: str | None, compress_inserts: bool
+    records: list[tuple[str, str]], reference_id: Optional[str], compress_inserts: bool
 ) -> list[tuple[list[int], int]]:
     alignment_length = len(records[0][1])
     if reference_id is None:
@@ -304,12 +305,12 @@ def build_microreact_payload(
     tree_bytes: bytes,
     id_column: str,
     table_fields: list[str],
-    reference_id: str | None = None,
-    secondary_table_path: Path | None = None,
-    secondary_table_bytes: bytes | None = None,
-    secondary_table_fields: list[str] | None = None,
-    secondary_master_field: str | None = None,
-    secondary_link_field: str | None = None,
+    reference_id: Optional[str] = None,
+    secondary_table_path: Optional[Path] = None,
+    secondary_table_bytes: Optional[bytes] = None,
+    secondary_table_fields: Optional[list[str]] = None,
+    secondary_master_field: Optional[str] = None,
+    secondary_link_field: Optional[str] = None,
     secondary_title: str = "Metadata",
     compress_inserts: bool = False,
 ) -> dict:
@@ -456,7 +457,7 @@ def upload_project(payload: dict, token: str, access: str) -> dict:
         raise RuntimeError(str(exc)) from exc
 
 
-def get_token(token_env: str) -> tuple[str | None, str]:
+def get_token(token_env: str) -> tuple[Optional[str], str]:
     token = os.environ.get(token_env)
     if token:
         return token, token_env
