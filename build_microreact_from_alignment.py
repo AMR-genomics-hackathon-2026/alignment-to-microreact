@@ -64,6 +64,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--compress-inserts",
+        action="store_true",
+        help=(
+            "When using --reference-id, collapse reference-gap columns into the "
+            "nearest retained reference position instead of dropping them."
+        ),
+    )
+    parser.add_argument(
         "--token-env",
         default=DEFAULT_TOKEN_ENV,
         help=(
@@ -162,47 +170,76 @@ def normalise_base(value: str, ignore_case: bool) -> str:
     return value.upper() if ignore_case else value
 
 
-def build_column_map(
-    records: list[tuple[str, str]], reference_id: str | None
-) -> list[tuple[int, int]]:
+def build_column_groups(
+    records: list[tuple[str, str]], reference_id: str | None, compress_inserts: bool
+) -> list[tuple[list[int], int]]:
     alignment_length = len(records[0][1])
     if reference_id is None:
-        return [(index, index + 1) for index in range(alignment_length)]
+        return [([index], index + 1) for index in range(alignment_length)]
+
+    if compress_inserts and reference_id is None:
+        raise SystemExit("--compress-inserts requires --reference-id")
 
     record_map = dict(records)
     if reference_id not in record_map:
         raise SystemExit(f"Reference sequence {reference_id!r} was not found in the alignment")
 
     reference_sequence = record_map[reference_id]
-    column_map: list[tuple[int, int]] = []
+    column_groups: list[tuple[list[int], int]] = []
     reference_position = 0
+    pending_insert_indexes: list[int] = []
+
     for alignment_index, value in enumerate(reference_sequence):
         if value in {"-", "."}:
+            if compress_inserts:
+                pending_insert_indexes.append(alignment_index)
             continue
         reference_position += 1
-        column_map.append((alignment_index, reference_position))
+        if compress_inserts:
+            if column_groups and pending_insert_indexes:
+                previous_indexes, previous_label = column_groups[-1]
+                column_groups[-1] = (
+                    previous_indexes + pending_insert_indexes,
+                    previous_label,
+                )
+                pending_insert_indexes = []
+            group_indexes = [alignment_index]
+            if pending_insert_indexes:
+                group_indexes = pending_insert_indexes + group_indexes
+                pending_insert_indexes = []
+        else:
+            group_indexes = [alignment_index]
+        column_groups.append((group_indexes, reference_position))
 
-    if not column_map:
+    if not column_groups:
         raise SystemExit(f"Reference sequence {reference_id!r} contains no non-gap positions")
 
-    return column_map
+    if compress_inserts and pending_insert_indexes:
+        group_indexes, label_position = column_groups[-1]
+        column_groups[-1] = (group_indexes + pending_insert_indexes, label_position)
+
+    return column_groups
 
 
 def find_variant_positions(
-    records: list[tuple[str, str]], column_map: list[tuple[int, int]], ignore_case: bool
-) -> list[tuple[int, int]]:
+    records: list[tuple[str, str]],
+    column_groups: list[tuple[list[int], int]],
+    ignore_case: bool,
+) -> list[tuple[list[int], int]]:
     sequences = [sequence for _, sequence in records]
-    variant_positions: list[tuple[int, int]] = []
+    variant_positions: list[tuple[list[int], int]] = []
 
-    for alignment_index, label_position in column_map:
-        column_values = [sequence[alignment_index] for sequence in sequences]
+    for alignment_indexes, label_position in column_groups:
+        column_values = [
+            "".join(sequence[index] for index in alignment_indexes) for sequence in sequences
+        ]
         observed = {
             normalise_base(value, ignore_case)
             for value in column_values
             if value not in {"?", "."}
         }
         if len(observed) > 1:
-            variant_positions.append((alignment_index, label_position))
+            variant_positions.append((alignment_indexes, label_position))
 
     if not variant_positions:
         raise SystemExit("No variant positions were found in the supplied alignment")
@@ -211,15 +248,19 @@ def find_variant_positions(
 
 
 def build_rows(
-    records: list[tuple[str, str]], variant_positions: list[tuple[int, int]], id_column: str
+    records: list[tuple[str, str]],
+    variant_positions: list[tuple[list[int], int]],
+    id_column: str,
 ) -> tuple[list[str], list[dict[str, str]]]:
     header = [id_column] + [f"pos_{position}" for _, position in variant_positions]
     rows: list[dict[str, str]] = []
 
     for sample_id, sequence in records:
         row = {id_column: sample_id}
-        for alignment_index, label_position in variant_positions:
-            row[f"pos_{label_position}"] = sequence[alignment_index]
+        for alignment_indexes, label_position in variant_positions:
+            row[f"pos_{label_position}"] = "".join(
+                sequence[index] for index in alignment_indexes
+            )
         rows.append(row)
 
     return header, rows
@@ -270,6 +311,7 @@ def build_microreact_payload(
     secondary_master_field: str | None = None,
     secondary_link_field: str | None = None,
     secondary_title: str = "Metadata",
+    compress_inserts: bool = False,
 ) -> dict:
     csv_blob = "data:text/csv;base64," + base64.b64encode(csv_bytes).decode("ascii")
     tree_blob = (
@@ -285,9 +327,16 @@ def build_microreact_payload(
         "meta": {
             "name": project_name,
             "description": (
-                f"Variant positions numbered relative to reference {reference_id}."
-                if reference_id
-                else "Variant positions numbered by alignment column."
+                (
+                    f"Variant positions numbered relative to reference {reference_id}, "
+                    "with insert columns compressed into adjacent reference positions."
+                )
+                if reference_id and compress_inserts
+                else (
+                    f"Variant positions numbered relative to reference {reference_id}."
+                    if reference_id
+                    else "Variant positions numbered by alignment column."
+                )
             ),
         },
         "files": {
@@ -426,11 +475,13 @@ def main() -> int:
     args = parse_args()
     if args.payload_output.suffix != ".microreact":
         args.payload_output = args.payload_output.with_suffix(".microreact")
+    if args.compress_inserts and not args.reference_id:
+        raise SystemExit("--compress-inserts requires --reference-id")
 
     records = read_fasta(args.alignment)
-    column_map = build_column_map(records, args.reference_id)
+    column_groups = build_column_groups(records, args.reference_id, args.compress_inserts)
     variant_positions = find_variant_positions(
-        records, column_map=column_map, ignore_case=args.ignore_case
+        records, column_groups=column_groups, ignore_case=args.ignore_case
     )
     header, rows = build_rows(records, variant_positions, args.id_column)
 
@@ -468,6 +519,7 @@ def main() -> int:
         secondary_master_field=args.secondary_master_field,
         secondary_link_field=args.secondary_link_field,
         secondary_title=args.secondary_title,
+        compress_inserts=args.compress_inserts,
     )
     args.payload_output.write_text(json.dumps(payload, indent=2) + "\n")
 
@@ -476,6 +528,7 @@ def main() -> int:
         "samples": len(records),
         "alignment_length": len(records[0][1]),
         "reference_id": args.reference_id,
+        "compress_inserts": args.compress_inserts,
         "variant_positions": len(variant_positions),
         "csv_output": str(args.csv_output.resolve()),
         "payload_output": str(args.payload_output.resolve()),
