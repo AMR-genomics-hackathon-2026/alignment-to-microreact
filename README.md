@@ -24,6 +24,8 @@ Example inputs:
 - `SHV_ncbirefgenes_noBla.tsv`
 
 Example reference/example outputs for inspection:
+- `ref.csv`
+- `collapsed_insert_example.csv`
 - `3panel_example.microreact`
 - `SHV tree.microreact`
 
