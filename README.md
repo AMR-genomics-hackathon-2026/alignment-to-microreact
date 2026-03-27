@@ -10,6 +10,12 @@ The script:
 - can optionally add a second linked metadata table
 - can optionally number positions relative to a named reference sequence
 
+By default, the script writes both local output files:
+- `variant_positions.csv`
+- `project.microreact`
+
+If you do not pass `--skip-upload`, it then also tries to create the Microreact project via API.
+
 ## Files In This Repo
 
 Example inputs:
@@ -37,7 +43,7 @@ If you want the script to create the Microreact project directly, export your ke
 export MICROREACT_ACCESS_KEY='your-key-here'
 ```
 
-If you do not want to upload yet, add `--skip-upload` and the script will only write the CSV and `.microreact` file locally.
+If you do not want to upload yet, add `--skip-upload` and the script will stop after writing the CSV and `.microreact` file locally.
 
 ## Basic Example
 

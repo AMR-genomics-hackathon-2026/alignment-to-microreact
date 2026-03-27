@@ -20,13 +20,13 @@ TOKEN_ENV_FALLBACKS = ("MICROREACT_ACCESS_KEY", "MICROREACT_ACCESS_TOKEN")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Extract variable positions from an aligned FASTA file, write a CSV, "
+            "Extract variable positions from an aligned FASTA file, always write a CSV, "
             "build a Microreact payload, and optionally create the project via API.\n\n"
             "To upload directly to Microreact, first put your access key in an "
             "environment variable, for example:\n"
             "  export MICROREACT_ACCESS_KEY='your-key-here'\n"
-            "Then run this script normally. If you only want the CSV and "
-            ".microreact file without uploading, add --skip-upload."
+            "Then run this script normally. The CSV and .microreact file are always "
+            "written locally; add --skip-upload to stop after writing those files."
         )
         ,
         formatter_class=argparse.RawTextHelpFormatter,
@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-upload",
         action="store_true",
-        help="Only write the CSV and .microreact JSON locally",
+        help="Write the CSV and .microreact JSON locally, but do not upload to Microreact",
     )
     parser.add_argument(
         "--ignore-case",
